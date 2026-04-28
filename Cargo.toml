@@ -1,10 +1,10 @@
 [package]
-name = "md-editor-tauri"
-version = "1.0.0"
+name = "fastmd"
+version = "0.1.0"
 description = "A fast Markdown editor built with Tauri"
-authors = ["MD Editor Contributors"]
+authors = ["fastMD Contributors"]
 license = "MIT"
-repository = "https://github.com/yourusername/md-editor"
+repository = "https://github.com/yourusername/fastMD"
 edition = "2021"
 rust-version = "1.77.2"
 

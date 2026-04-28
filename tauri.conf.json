@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "MD Editor",
-  "version": "1.0.0",
-  "identifier": "com.mywiki.mdeditor",
+  "productName": "fastMD",
+  "version": "0.1.0",
+  "identifier": "com.mywiki.fastmd",
   "build": {
     "frontendDist": "index.html"
   },
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "MD Editor",
+        "title": "fastMD",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

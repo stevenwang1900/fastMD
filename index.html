@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MD Editor</title>
+    <title>fastMD</title>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
@@ -786,7 +786,7 @@ function updateTitle() {
     const dirty = isDirty ? '● ' : '';
     filenameEl.textContent = dirty + name;
     filenameEl.className = isDirty ? 'dirty' : '';
-    document.title = `${dirty}${name} — MD Editor`;
+    document.title = `${dirty}${name} — fastMD`;
     document.getElementById('status-file').textContent = currentFile || '未保存';
 }
 
@@ -1391,7 +1391,7 @@ document.addEventListener('mouseup', () => {
 // ════════════════════════════════════════════════════════
 //  Init
 // ════════════════════════════════════════════════════════
-const defaultContent = `# 欢迎使用 MD Editor
+const defaultContent = `# 欢迎使用 fastMD
 
 这是一个本地 Markdown Wiki 编辑器，支持 **Mermaid 图表**、文件目录管理、拖放打开文件。
 
