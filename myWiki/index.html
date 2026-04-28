@@ -1,0 +1,1493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MD Editor</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: #1e1e1e;
+            color: #ccc;
+            overflow: hidden;
+        }
+
+        /* ── 工具栏 ── */
+        .toolbar {
+            height: 42px;
+            background: #2d2d2d;
+            border-bottom: 1px solid #3a3a3a;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            gap: 4px;
+            flex-shrink: 0;
+            -webkit-app-region: drag;
+        }
+        .toolbar .btn-group {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            -webkit-app-region: no-drag;
+        }
+        .toolbar .sep {
+            width: 1px;
+            height: 20px;
+            background: #444;
+            margin: 0 6px;
+        }
+        .toolbar button {
+            -webkit-app-region: no-drag;
+            padding: 5px 10px;
+            border: 1px solid transparent;
+            background: transparent;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            color: #bbb;
+            white-space: nowrap;
+            transition: background 0.1s, color 0.1s;
+        }
+        .toolbar button:hover { background: #3c3c3c; color: #eee; border-color: #555; }
+        .toolbar button.active { background: #094771; color: #fff; border-color: #0e639c; }
+
+        #filename {
+            margin-left: auto;
+            color: #666;
+            font-size: 12px;
+            -webkit-app-region: no-drag;
+            max-width: 280px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        #filename.dirty { color: #e8a838; }
+
+        /* ── 主体布局 ── */
+        .main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* ── 左侧文件树 ── */
+        .sidebar {
+            width: 220px;
+            min-width: 160px;
+            max-width: 400px;
+            background: #252526;
+            border-right: 1px solid #3a3a3a;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            user-select: none;
+            transition: width 0.18s ease;
+            overflow: hidden;
+        }
+        .sidebar.collapsed {
+            width: 0 !important;
+            min-width: 0;
+            border-right: none;
+        }
+        /* 侧边栏折叠时隐藏分割线 */
+        .sidebar.collapsed + .resize-handle {
+            display: none;
+        }
+        .sidebar-header {
+            height: 36px;
+            display: flex;
+            align-items: center;
+            padding: 0 8px;
+            gap: 4px;
+            border-bottom: 1px solid #3a3a3a;
+            flex-shrink: 0;
+        }
+        .sidebar-header .folder-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #aaa;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .sidebar-header button {
+            padding: 2px 5px;
+            border: none;
+            background: transparent;
+            color: #888;
+            cursor: pointer;
+            font-size: 15px;
+            border-radius: 3px;
+            line-height: 1;
+        }
+        .sidebar-header button:hover { background: #3a3a3a; color: #ccc; }
+
+        .file-tree {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 4px 0;
+        }
+        .file-tree::-webkit-scrollbar { width: 4px; }
+        .file-tree::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+
+        /* 拖放高亮 */
+        .file-tree.drag-over, .sidebar.drag-over {
+            background: rgba(9,71,113,0.25);
+            outline: 2px dashed #0e639c;
+            outline-offset: -2px;
+        }
+
+        .tree-item {
+            display: flex;
+            align-items: center;
+            height: 26px;
+            padding-right: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #ccc;
+            white-space: nowrap;
+            overflow: hidden;
+            position: relative;
+        }
+        .tree-item:hover { background: #2a2d2e; }
+        .tree-item.active { background: #094771; color: #fff; }
+        .tree-item.active:hover { background: #0e5180; }
+        .tree-item.drop-target { background: rgba(9,71,113,0.4); outline: 1px dashed #0e639c; }
+
+        .tree-item .indent { flex-shrink: 0; }
+        .tree-item .arrow {
+            width: 16px;
+            flex-shrink: 0;
+            text-align: center;
+            font-size: 9px;
+            color: #888;
+            transition: transform 0.12s;
+        }
+        .tree-item .arrow.open { transform: rotate(90deg); }
+        .tree-item .icon {
+            width: 18px;
+            flex-shrink: 0;
+            text-align: center;
+            font-size: 13px;
+        }
+        .tree-item .label {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            padding-left: 3px;
+        }
+
+        /* 右键菜单 */
+        .context-menu {
+            position: fixed;
+            background: #2d2d2d;
+            border: 1px solid #555;
+            border-radius: 6px;
+            padding: 4px 0;
+            min-width: 160px;
+            z-index: 9999;
+            box-shadow: 0 6px 20px rgba(0,0,0,.6);
+            display: none;
+        }
+        .context-menu.show { display: block; }
+        .context-menu-item {
+            padding: 6px 16px;
+            font-size: 13px;
+            cursor: pointer;
+            color: #ccc;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .context-menu-item:hover { background: #094771; color: #fff; }
+        .context-menu-item.danger { color: #f48771; }
+        .context-menu-item.danger:hover { background: #5a1d1d; color: #f48771; }
+        .context-menu-sep { height: 1px; background: #3a3a3a; margin: 4px 0; }
+
+        /* resize 拖条 */
+        .resize-handle {
+            width: 4px;
+            cursor: col-resize;
+            background: transparent;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 10;
+            transition: background 0.1s;
+        }
+        .resize-handle:hover, .resize-handle.dragging { background: #094771; }
+
+        /* ── 编辑/预览区 ── */
+        .workspace {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* 视图模式 */
+        .container.mode-edit .preview-pane   { display: none; }
+        .container.mode-edit .editor-pane    { border-right: none; }
+        .container.mode-preview .editor-pane { display: none; }
+        .container.mode-split .editor-pane   { border-right: 1px solid #3a3a3a; }
+        .container.mode-edit .split-handle,
+        .container.mode-preview .split-handle { display: none; }
+
+        .editor-pane, .preview-pane {
+            flex: 1;
+            overflow: auto;
+            min-width: 80px;
+        }
+
+        /* 编辑/预览中间分割拖条 */
+        .split-handle {
+            width: 4px;
+            cursor: col-resize;
+            background: transparent;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 10;
+            transition: background 0.1s;
+        }
+        .split-handle:hover, .split-handle.dragging { background: #094771; }
+        .editor-pane textarea {
+            width: 100%;
+            height: 100%;
+            border: none;
+            outline: none;
+            padding: 20px;
+            font-family: "SF Mono", Monaco, "Cascadia Code", "Consolas", monospace;
+            font-size: 14px;
+            line-height: 1.65;
+            resize: none;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            tab-size: 4;
+        }
+        /* 拖放到编辑区 */
+        .editor-pane.drag-over textarea {
+            opacity: 0.5;
+        }
+        .editor-pane.drag-over::after {
+            content: '松开以打开文件';
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 16px;
+            color: #4ec9b0;
+            pointer-events: none;
+        }
+        .editor-pane { position: relative; }
+
+        /* 预览区 */
+        .preview-pane {
+            padding: 24px 32px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        .preview-pane h1, .preview-pane h2, .preview-pane h3,
+        .preview-pane h4, .preview-pane h5, .preview-pane h6 {
+            margin: 20px 0 10px; color: #e8e8e8; line-height: 1.3;
+        }
+        .preview-pane h1 { font-size: 1.85em; border-bottom: 1px solid #3a3a3a; padding-bottom: 8px; }
+        .preview-pane h2 { font-size: 1.45em; border-bottom: 1px solid #3a3a3a; padding-bottom: 5px; }
+        .preview-pane h3 { font-size: 1.2em; }
+        .preview-pane p { margin: 10px 0; line-height: 1.75; }
+        .preview-pane code {
+            background: #2d2d2d; padding: 2px 6px; border-radius: 3px;
+            font-family: "SF Mono", monospace; font-size: 0.88em; color: #ce9178;
+        }
+        .preview-pane pre {
+            background: #2d2d2d; padding: 16px; border-radius: 6px;
+            overflow-x: auto; margin: 14px 0; position: relative;
+        }
+        .preview-pane pre code { background: none; padding: 0; color: #d4d4d4; font-size: 0.9em; }
+        .preview-pane blockquote {
+            border-left: 3px solid #555; padding-left: 16px; color: #888; margin: 12px 0;
+        }
+        .preview-pane table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+        .preview-pane th, .preview-pane td { border: 1px solid #3a3a3a; padding: 8px 12px; text-align: left; }
+        .preview-pane th { background: #2d2d2d; color: #eee; }
+        .preview-pane tr:nth-child(even) { background: #252525; }
+        .preview-pane a { color: #4ec9b0; text-decoration: none; }
+        .preview-pane a:hover { text-decoration: underline; }
+        .preview-pane ul, .preview-pane ol { padding-left: 26px; margin: 10px 0; }
+        .preview-pane li { line-height: 1.75; margin: 3px 0; }
+        .preview-pane hr { border: none; border-top: 1px solid #3a3a3a; margin: 20px 0; }
+        .preview-pane img { max-width: 100%; border-radius: 4px; }
+
+        /* Mermaid 容器 */
+        .mermaid-wrapper {
+            margin: 14px 0;
+            background: #1a1a2e;
+            border: 1px solid #3a3a3a;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .mermaid-toolbar {
+            display: flex;
+            align-items: center;
+            padding: 6px 10px;
+            background: #252540;
+            border-bottom: 1px solid #3a3a3a;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .mermaid-toolbar span {
+            font-size: 11px;
+            color: #888;
+            flex: 1;
+        }
+        .mermaid-toolbar button {
+            padding: 3px 8px;
+            font-size: 11px;
+            border: 1px solid #555;
+            background: #2d2d2d;
+            color: #bbb;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .mermaid-toolbar button:hover { background: #3c3c3c; color: #eee; }
+        .mermaid-toolbar select {
+            padding: 3px 6px;
+            font-size: 11px;
+            border: 1px solid #555;
+            background: #2d2d2d;
+            color: #bbb;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .mermaid-content {
+            padding: 16px;
+            display: flex;
+            justify-content: center;
+            overflow-x: auto;
+        }
+        .mermaid-content svg { max-width: 100%; }
+
+        /* inline 重命名 */
+        .rename-input {
+            background: #3c3c3c;
+            border: 1px solid #094771;
+            color: #fff;
+            font-size: 13px;
+            outline: none;
+            padding: 1px 4px;
+            border-radius: 2px;
+            width: 140px;
+        }
+
+        /* 空提示 */
+        .empty-hint {
+            padding: 16px 12px;
+            font-size: 12px;
+            color: #555;
+            line-height: 1.7;
+            text-align: center;
+        }
+        .empty-hint .drop-hint {
+            margin-top: 8px;
+            padding: 10px;
+            border: 1px dashed #3a3a3a;
+            border-radius: 6px;
+            font-size: 11px;
+            color: #444;
+        }
+
+        /* 状态栏 */
+        .statusbar {
+            height: 22px;
+            background: #007acc;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+        .statusbar span {
+            font-size: 11px;
+            color: rgba(255,255,255,0.8);
+        }
+        .statusbar .sep { width: 1px; height: 12px; background: rgba(255,255,255,0.3); }
+    </style>
+</head>
+<body>
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <div class="btn-group">
+            <button onclick="toggleSidebar()" id="btn-sidebar" title="切换文件目录 (⌘B)">☰</button>
+        </div>
+        <div class="sep"></div>
+        <div class="btn-group">
+            <button onclick="newFile()" title="新建 (⌘N)">新建</button>
+            <button onclick="openFile()" title="打开文件 (⌘O)">打开</button>
+            <button onclick="saveFile()" title="保存 (⌘S)">保存</button>
+            <button onclick="saveFileAs()" title="另存为">另存为</button>
+        </div>
+        <div class="sep"></div>
+        <div class="btn-group">
+            <button onclick="openFolder()" title="打开目录">📂 打开目录</button>
+        </div>
+        <div class="sep"></div>
+        <!-- 视图模式切换 -->
+        <div class="btn-group" id="view-btns">
+            <button id="btn-edit"    onclick="setViewMode('edit')"    title="仅编辑">编辑</button>
+            <button id="btn-split"   onclick="setViewMode('split')"   title="分屏预览" class="active">分屏</button>
+            <button id="btn-preview" onclick="setViewMode('preview')" title="仅预览">预览</button>
+        </div>
+        <div class="sep"></div>
+        <!-- Mermaid 主题 -->
+        <div class="btn-group">
+            <span style="font-size:11px;color:#888;-webkit-app-region:no-drag">图表:</span>
+            <select id="mermaid-theme" onchange="changeMermaidTheme(this.value)" style="-webkit-app-region:no-drag;padding:4px 6px;background:#3c3c3c;color:#ccc;border:1px solid #555;border-radius:4px;font-size:12px;cursor:pointer">
+                <option value="dark">暗色</option>
+                <option value="default">默认</option>
+                <option value="forest">森林</option>
+                <option value="neutral">中性</option>
+                <option value="base">基础</option>
+            </select>
+        </div>
+        <span id="filename">Untitled</span>
+    </div>
+
+    <div class="main">
+        <!-- 左侧文件树 -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <span class="folder-label" id="folder-name">未打开目录</span>
+                <button onclick="openFolder()" title="打开目录">⊕</button>
+                <button onclick="newFileInFolder()" title="新建文件">+</button>
+                <button onclick="refreshTree()" title="刷新">↺</button>
+            </div>
+            <div class="file-tree" id="file-tree">
+                <div class="empty-hint">
+                    点击「打开目录」加载文件夹
+                    <div class="drop-hint">或将文件夹<br>拖到此处</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- resize 拖条 -->
+        <div class="resize-handle" id="resize-handle"></div>
+
+        <!-- 编辑/预览区 -->
+        <div class="workspace">
+            <div class="container mode-split" id="container">
+                <div class="editor-pane" id="editor-pane">
+                    <textarea id="editor" placeholder="输入 Markdown... 或将 .md 文件拖入此处"></textarea>
+                </div>
+                <div class="split-handle" id="split-handle"></div>
+                <div class="preview-pane" id="preview"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 调试日志区域 (默认隐藏) -->
+    <div id="debug-log" style="display:none; background:#1a1a1a; color:#888; font-size:11px; padding:4px 10px; border-top:1px solid #333; max-height:60px; overflow-y:auto; font-family:monospace;"></div>
+
+    <!-- 状态栏 -->
+    <div class="statusbar">
+        <span id="status-mode">分屏</span>
+        <div class="sep"></div>
+        <span id="status-pos">行 1, 列 1</span>
+        <div class="sep"></div>
+        <span id="status-words">0 字</span>
+        <div class="sep"></div>
+        <span id="status-file">未保存</span>
+    </div>
+
+    <!-- 右键菜单 -->
+    <div class="context-menu" id="context-menu">
+        <div class="context-menu-item" id="ctx-open">📄 打开</div>
+        <div class="context-menu-item" id="ctx-new-file">📝 新建文件</div>
+        <div class="context-menu-item" id="ctx-new-folder">📁 新建子文件夹</div>
+        <div class="context-menu-sep"></div>
+        <div class="context-menu-item" id="ctx-rename">✏️ 重命名</div>
+        <div class="context-menu-item" id="ctx-copy-path">📋 复制路径</div>
+        <div class="context-menu-sep"></div>
+        <div class="context-menu-item danger" id="ctx-delete">🗑 删除</div>
+    </div>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  Tauri v2 bridge
+// ════════════════════════════════════════════════════════
+const invoke = window.__TAURI__.core.invoke;
+window._mermaidCounter = 0;
+
+// ════════════════════════════════════════════════════════
+//  Debug log
+// ════════════════════════════════════════════════════════
+function appLog(msg) {
+    const logEl = document.getElementById('debug-log');
+    if (!logEl) return;
+    const time = new Date().toLocaleTimeString();
+    const line = document.createElement('div');
+    line.textContent = `[${time}] ${msg}`;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+    // 保持最多 20 行
+    while (logEl.children.length > 20) {
+        logEl.removeChild(logEl.firstChild);
+    }
+}
+window.appLog = appLog;
+
+// dialog plugin — open/save 需要把选项包在 { options: ... } 里
+async function dialogOpen(opts) {
+    return invoke('plugin:dialog|open', { options: opts || {} });
+}
+async function dialogSave(opts) {
+    return invoke('plugin:dialog|save', { options: opts || {} });
+}
+async function dialogMessage(msg, opts) {
+    return invoke('plugin:dialog|message', { message: String(msg), ...(opts||{}) });
+}
+async function dialogConfirm(msg, opts) {
+    return invoke('plugin:dialog|confirm', { message: String(msg), ...(opts||{}) });
+}
+
+// Rust file commands
+async function readTextFile(path)           { return invoke('read_text_file', { path }); }
+async function writeTextFile(path, content) { return invoke('write_text_file', { path, content }); }
+async function fsReadDir(path)              { return invoke('read_dir', { path }); }
+async function fsCreateDir(path)            { return invoke('create_dir_cmd', { path }); }
+async function fsRemove(path, isDir)        { return invoke('remove_path', { path, isDir }); }
+async function fsRename(oldPath, newPath)   { return invoke('rename_path', { oldPath, newPath }); }
+
+// ════════════════════════════════════════════════════════
+//  State
+// ════════════════════════════════════════════════════════
+let currentFile   = null;
+let isDirty       = false;
+let currentFolder = null;
+let treeData      = {};   // path -> { expanded }
+let ctxTarget     = null;
+let viewMode      = 'split';
+let mermaidTheme  = 'dark';
+
+const editor       = document.getElementById('editor');
+const preview      = document.getElementById('preview');
+const filenameEl   = document.getElementById('filename');
+const fileTree     = document.getElementById('file-tree');
+const folderNameEl = document.getElementById('folder-name');
+const ctxMenu      = document.getElementById('context-menu');
+const container    = document.getElementById('container');
+const editorPane   = document.getElementById('editor-pane');
+
+// ════════════════════════════════════════════════════════
+//  Mermaid
+// ════════════════════════════════════════════════════════
+function initMermaid(theme) {
+    mermaid.initialize({
+        startOnLoad: false, theme, securityLevel: 'loose',
+        flowchart: { htmlLabels: false },
+        sequence:  { htmlLabels: false },
+    });
+}
+initMermaid(mermaidTheme);
+
+window.changeMermaidTheme = function(theme) {
+    mermaidTheme = theme;
+    initMermaid(theme);
+    updatePreview();
+};
+
+// ════════════════════════════════════════════════════════
+//  View mode
+// ════════════════════════════════════════════════════════
+window.setViewMode = function(mode) {
+    viewMode = mode;
+    container.className = 'container mode-' + mode;
+    document.querySelectorAll('#view-btns button').forEach(b => b.classList.remove('active'));
+    document.getElementById('btn-' + mode).classList.add('active');
+    document.getElementById('status-mode').textContent = { edit:'编辑', split:'分屏', preview:'预览' }[mode];
+    // 切换模式时重置分割比例，交由 flex:1 自动分配
+    editorPane.style.flex = '';
+    editorPane.style.width = '';
+    const previewEl = document.getElementById('preview');
+    previewEl.style.flex = '';
+    previewEl.style.width = '';
+    if (mode !== 'edit') updatePreview();
+};
+
+// ════════════════════════════════════════════════════════
+//  Preview rendering
+// ════════════════════════════════════════════════════════
+let previewTimer = null;
+async function updatePreview() {
+    if (viewMode === 'edit') return;
+
+    // 提取 mermaid 块，替换为占位符
+    const raw = editor.value;
+    const blocks = [];
+    const withPlaceholder = raw.replace(/```mermaid\n([\s\S]*?)```/g, (_, code) => {
+        const idx = blocks.length;
+        blocks.push(code.trim());
+        return `<div class="mermaid-placeholder" data-idx="${idx}"></div>`;
+    });
+
+    // 渲染普通 Markdown
+    let html = marked.parse(withPlaceholder);
+    preview.innerHTML = html;
+
+    // 逐块渲染 Mermaid
+    const placeholders = preview.querySelectorAll('.mermaid-placeholder');
+    for (const ph of placeholders) {
+        const idx = parseInt(ph.dataset.idx);
+        const code = blocks[idx];
+        const wrapper = document.createElement('div');
+        wrapper.className = 'mermaid-wrapper';
+
+        const toolbar = document.createElement('div');
+        toolbar.className = 'mermaid-toolbar';
+        toolbar.innerHTML = `
+            <span>Mermaid 图表</span>
+            <select onchange="changeMermaidTheme(this.value)" title="切换主题">
+                <option value="dark"${mermaidTheme==='dark'?' selected':''}>暗色</option>
+                <option value="default"${mermaidTheme==='default'?' selected':''}>默认</option>
+                <option value="forest"${mermaidTheme==='forest'?' selected':''}>森林</option>
+                <option value="neutral"${mermaidTheme==='neutral'?' selected':''}>中性</option>
+                <option value="base"${mermaidTheme==='base'?' selected':''}>基础</option>
+            </select>
+            <button onclick="downloadMermaidSVG(this)" title="下载 SVG">⬇ SVG</button>
+            <button onclick="downloadMermaidPNG(this)" title="下载 PNG">⬇ PNG</button>
+        `;
+
+        const content = document.createElement('div');
+        content.className = 'mermaid-content';
+        // 用全局递增计数器保证 ID 唯一，避免 Date.now() 在循环中相同
+        const mermaidId = 'mermaid-' + (++window._mermaidCounter);
+        content.dataset.code = code;
+
+        wrapper.appendChild(toolbar);
+        wrapper.appendChild(content);
+        ph.replaceWith(wrapper);
+
+        try {
+            const { svg } = await mermaid.render(mermaidId, code);
+            // mermaid 有时把临时元素留在 body，清理掉
+            document.getElementById(mermaidId)?.remove();
+            content.innerHTML = svg;
+            // 确保 SVG 有明确的 width/height（PNG 导出需要）
+            const svgEl = content.querySelector('svg');
+            if (svgEl && svgEl.viewBox?.baseVal?.width) {
+                svgEl.setAttribute('width',  svgEl.viewBox.baseVal.width);
+                svgEl.setAttribute('height', svgEl.viewBox.baseVal.height);
+            }
+        } catch(e) {
+            content.innerHTML = `<pre style="color:#f48771;font-size:12px">${e.message || e}</pre>`;
+        }
+    }
+
+    updateWordCount();
+}
+
+function schedulePreview() {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(updatePreview, 150);
+}
+
+// ════════════════════════════════════════════════════════
+//  Mermaid download
+// ════════════════════════════════════════════════════════
+window.downloadMermaidSVG = function(btn) {
+    const content = btn.closest('.mermaid-wrapper').querySelector('.mermaid-content');
+    const svg = content.querySelector('svg');
+    if (!svg) return;
+    const blob = new Blob([svg.outerHTML], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'diagram.svg'; a.click();
+    URL.revokeObjectURL(url);
+};
+
+window.downloadMermaidPNG = async function(btn) {
+    const wrapper = btn.closest('.mermaid-wrapper');
+    const content = wrapper.querySelector('.mermaid-content');
+    const code    = content.dataset.code;
+    if (!code) { alert('找不到图表源码'); return; }
+
+    // 用 htmlLabels:false 重新渲染一份无 foreignObject 的纯 SVG
+    // graph TD 默认用 foreignObject 渲染节点文字，会 taint canvas 导致 toBlob 失败
+    const tempId = 'mermaid-export-' + Date.now();
+    let svgStr;
+    try {
+        const prevTheme = mermaidTheme;
+        initMermaid(prevTheme);
+        const { svg } = await mermaid.render(tempId, code);
+        document.getElementById(tempId)?.remove();
+        svgStr = svg;
+    } catch(e) {
+        alert('图表重渲染失败：' + e);
+        return;
+    }
+
+    // 解析 SVG，获取尺寸
+    const parser = new DOMParser();
+    const doc    = parser.parseFromString(svgStr, 'image/svg+xml');
+    const svgEl  = doc.querySelector('svg');
+    if (!svgEl) { alert('SVG 解析失败'); return; }
+
+    if (!svgEl.getAttribute('xmlns')) svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+
+    const vbW  = svgEl.viewBox?.baseVal?.width;
+    const vbH  = svgEl.viewBox?.baseVal?.height;
+    let w = parseFloat(svgEl.getAttribute('width'))  || (vbW > 0 ? vbW : 0) || 800;
+    let h = parseFloat(svgEl.getAttribute('height')) || (vbH > 0 ? vbH : 0) || 600;
+    svgEl.setAttribute('width',  w);
+    svgEl.setAttribute('height', h);
+
+    const finalSvg  = new XMLSerializer().serializeToString(svgEl);
+    const svgBlob   = new Blob([finalSvg], { type: 'image/svg+xml;charset=utf-8' });
+    const url       = URL.createObjectURL(svgBlob);
+
+    const img = new Image();
+    img.onload = () => {
+        const scale  = 4;
+        const canvas = document.createElement('canvas');
+        canvas.width  = w * scale;
+        canvas.height = h * scale;
+        const ctx2 = canvas.getContext('2d');
+        ctx2.scale(scale, scale);
+        ctx2.clearRect(0, 0, w, h);
+        ctx2.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(blob => {
+            if (!blob || blob.size < 100) { alert('PNG 生成失败，请改用 SVG 下载'); return; }
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'diagram.png'; a.click();
+        }, 'image/png');
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); alert('SVG 转图片失败，请改用 SVG 下载'); };
+    img.src = url;
+};
+
+// ════════════════════════════════════════════════════════
+//  Title / Status
+// ════════════════════════════════════════════════════════
+function updateTitle() {
+    const name = currentFile ? currentFile.split('/').pop() : 'Untitled';
+    const dirty = isDirty ? '● ' : '';
+    filenameEl.textContent = dirty + name;
+    filenameEl.className = isDirty ? 'dirty' : '';
+    document.title = `${dirty}${name} — MD Editor`;
+    document.getElementById('status-file').textContent = currentFile || '未保存';
+}
+
+function updateCursorPos() {
+    const val = editor.value.substring(0, editor.selectionStart);
+    const lines = val.split('\n');
+    const line = lines.length;
+    const col  = lines[lines.length - 1].length + 1;
+    document.getElementById('status-pos').textContent = `行 ${line}, 列 ${col}`;
+}
+
+function updateWordCount() {
+    const text = editor.value.replace(/```[\s\S]*?```/g, '').trim();
+    const count = text ? text.replace(/\s+/g, '').length : 0;
+    document.getElementById('status-words').textContent = `${count} 字`;
+}
+
+// ════════════════════════════════════════════════════════
+//  Editor events
+// ════════════════════════════════════════════════════════
+editor.addEventListener('input', () => {
+    isDirty = true;
+    updateTitle();
+    schedulePreview();
+});
+
+editor.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey) {
+        if (e.key === 's') { e.preventDefault(); e.shiftKey ? saveFileAs() : saveFile(); }
+        if (e.key === 'o') { e.preventDefault(); openFile(); }
+        if (e.key === 'n') { e.preventDefault(); newFile(); }
+        if (e.key === 'p') { e.preventDefault(); setViewMode(viewMode === 'preview' ? 'split' : 'preview'); }
+        if (e.key === 'b') { e.preventDefault(); toggleSidebar(); }
+    }
+    // Tab 缩进
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const s = editor.selectionStart, en = editor.selectionEnd;
+        editor.value = editor.value.substring(0, s) + '    ' + editor.value.substring(en);
+        editor.selectionStart = editor.selectionEnd = s + 4;
+        isDirty = true; updateTitle(); schedulePreview();
+    }
+});
+
+editor.addEventListener('click', updateCursorPos);
+editor.addEventListener('keyup', updateCursorPos);
+
+// ════════════════════════════════════════════════════════
+//  File operations
+// ════════════════════════════════════════════════════════
+window.newFile = function() {
+    editor.value = '';
+    currentFile = null;
+    isDirty = false;
+    updatePreview();
+    updateTitle();
+    editor.focus();
+};
+
+window.openFile = async function() {
+    try {
+        const result = await dialogOpen({
+            multiple: false,
+            filters: [
+                { name: 'Markdown', extensions: ['md', 'markdown'] },
+                { name: 'Text', extensions: ['txt'] },
+                { name: 'All Files', extensions: ['*'] }
+            ]
+        });
+        if (!result) return;
+        const path = typeof result === 'string' ? result : (result.path || result[0]?.path || result[0]);
+        if (path) await loadFile(path);
+    } catch(e) { console.error('openFile error:', e); }
+};
+
+window.saveFile = async function() {
+    try {
+        if (!currentFile) {
+            return saveFileAs();
+        }
+        await writeTextFile(currentFile, editor.value);
+        isDirty = false;
+        updateTitle();
+        if (currentFolder && currentFile.startsWith(currentFolder)) refreshTree();
+    } catch(e) {
+        console.error('saveFile error:', e);
+        await dialogMessage('保存失败：' + e, { title: '错误' });
+    }
+};
+
+window.saveFileAs = async function() {
+    try {
+        const result = await dialogSave({
+            filters: [
+                { name: 'Markdown', extensions: ['md'] },
+                { name: 'Text',     extensions: ['txt'] },
+                { name: 'All Files', extensions: ['*'] }
+            ]
+        });
+        if (!result) return;
+        const path = typeof result === 'string' ? result : (result.path || result);
+        if (!path) return;
+        await writeTextFile(path, editor.value);
+        currentFile = path;
+        isDirty = false;
+        updateTitle();
+        if (currentFolder && currentFile.startsWith(currentFolder)) refreshTree();
+    } catch(e) {
+        console.error('saveFileAs error:', e);
+        await dialogMessage('另存为失败：' + e, { title: '错误' });
+    }
+};
+
+async function loadFile(path) {
+    try {
+        const content = await readTextFile(path);
+        editor.value = content;
+        currentFile = path;
+        isDirty = false;
+        await updatePreview();
+        updateTitle();
+        highlightActiveFile();
+        editor.focus();
+        updateCursorPos();
+    } catch(e) {
+        console.error('loadFile error:', e);
+        await dialogMessage('打开文件失败：' + e, { title: '错误' });
+    }
+}
+
+// ════════════════════════════════════════════════════════
+//  Drag & Drop — editor area
+// ════════════════════════════════════════════════════════
+// 只在编辑器区域阻止默认行为
+editorPane.addEventListener('dragenter', (e) => {
+    appLog('editorPane dragenter');
+    e.preventDefault();
+    e.stopPropagation();
+    editorPane.classList.add('drag-over');
+});
+editorPane.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+    editorPane.classList.add('drag-over');
+});
+editorPane.addEventListener('dragleave', (e) => {
+    appLog('editorPane dragleave');
+    e.preventDefault();
+    e.stopPropagation();
+    if (!editorPane.contains(e.relatedTarget)) editorPane.classList.remove('drag-over');
+});
+editorPane.addEventListener('drop', async (e) => {
+    appLog('editorPane drop 触发');
+    e.preventDefault();
+    e.stopPropagation();
+    editorPane.classList.remove('drag-over');
+    
+    appLog('dataTransfer.types: ' + JSON.stringify(e.dataTransfer.types ? Array.from(e.dataTransfer.types) : 'N/A'));
+    appLog('dataTransfer.files length: ' + (e.dataTransfer.files ? e.dataTransfer.files.length : 'N/A'));
+    
+    const files = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
+    appLog('files 数量: ' + files.length);
+    
+    if (files.length > 0) {
+        const f = files[0];
+        appLog('file[0]: name=' + f.name + ', type=' + f.type + ', size=' + f.size);
+        appLog('file[0].path: ' + (f.path || 'undefined'));
+        const path = f.path;
+        if (path) {
+            await loadFile(path);
+        } else {
+            appLog('没有 path 属性，尝试读取内容');
+            // 尝试读取文件内容
+            try {
+                const text = await f.text();
+                appLog('读取到内容长度: ' + text.length);
+                editor.value = text;
+                currentFile = null;
+                isDirty = true;
+                updatePreview();
+                updateTitle();
+            } catch(err) {
+                appLog('读取失败: ' + err);
+            }
+        }
+    } else {
+        appLog('files 为空');
+    }
+});
+
+// ════════════════════════════════════════════════════════
+//  Folder management
+// ════════════════════════════════════════════════════════
+window.openFolder = async function() {
+    try {
+        const result = await dialogOpen({ directory: true, multiple: false });
+        if (!result) return;
+        const folder = typeof result === 'string' ? result : (result.path || result[0]?.path || result[0]);
+        if (!folder) return;
+        currentFolder = folder;
+        treeData = {};
+        folderNameEl.textContent = folder.split('/').pop() || folder;
+        await refreshTree();
+    } catch(e) {
+        console.error('openFolder error:', e);
+        await dialogMessage('打开目录失败：' + e, { title: '错误' });
+    }
+};
+
+window.newFileInFolder = async function() {
+    if (!currentFolder) { await window.openFolder(); return; }
+    await createNewFile(currentFolder);
+};
+
+window.refreshTree = async function() {
+    if (!currentFolder) return;
+    try {
+        const entries = await buildTree(currentFolder, 0);
+        renderTree(entries);
+    } catch(e) { console.error('refreshTree error:', e); }
+};
+
+async function buildTree(dirPath, depth) {
+    let entries;
+    try { entries = await fsReadDir(dirPath); }
+    catch(e) { return []; }
+    const result = [];
+    for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        const item = { name: entry.name, path: entry.path, isDir: entry.is_dir, depth, children: [] };
+        if (item.isDir && treeData[item.path]?.expanded) {
+            item.children = await buildTree(item.path, depth + 1);
+        }
+        result.push(item);
+    }
+    return result;
+}
+
+function renderTree(entries) {
+    fileTree.innerHTML = '';
+    if (entries.length === 0) {
+        fileTree.innerHTML = '<div class="empty-hint">目录为空<div class="drop-hint">将文件拖到此处打开</div></div>';
+    } else {
+        renderEntries(entries, fileTree);
+    }
+    setupTreeDrop();
+}
+
+function renderEntries(entries, container) {
+    for (const entry of entries) {
+        const row = document.createElement('div');
+        row.className = 'tree-item' + (currentFile === entry.path ? ' active' : '');
+        row.dataset.path = entry.path;
+        row.dataset.isDir = entry.isDir ? '1' : '0';
+        row.draggable = true;
+
+        const indent = document.createElement('span');
+        indent.className = 'indent';
+        indent.style.width = (entry.depth * 16 + 4) + 'px';
+        row.appendChild(indent);
+
+        const arrow = document.createElement('span');
+        arrow.className = 'arrow' + (entry.isDir && treeData[entry.path]?.expanded ? ' open' : '');
+        arrow.textContent = entry.isDir ? '▶' : '';
+        row.appendChild(arrow);
+
+        const icon = document.createElement('span');
+        icon.className = 'icon';
+        icon.textContent = entry.isDir ? '📁' : getFileIcon(entry.name);
+        row.appendChild(icon);
+
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = entry.name;
+        row.appendChild(label);
+
+        row.addEventListener('click', () => handleItemClick(entry));
+        row.addEventListener('contextmenu', (e) => showContextMenu(e, entry));
+        container.appendChild(row);
+
+        if (entry.isDir && treeData[entry.path]?.expanded && entry.children.length > 0) {
+            renderEntries(entry.children, container);
+        }
+    }
+}
+
+async function handleItemClick(entry) {
+    if (entry.isDir) {
+        if (!treeData[entry.path]) treeData[entry.path] = {};
+        treeData[entry.path].expanded = !treeData[entry.path].expanded;
+        await refreshTree();
+    } else {
+        await loadFile(entry.path);
+    }
+}
+
+function highlightActiveFile() {
+    document.querySelectorAll('.tree-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.path === currentFile);
+    });
+}
+
+function getFileIcon(name) {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    const map = { md:'📝', markdown:'📝', txt:'📄', json:'{}', js:'🟨', ts:'🔷',
+                  html:'🌐', css:'🎨', png:'🖼', jpg:'🖼', jpeg:'🖼', gif:'🖼',
+                  svg:'🖼', pdf:'📕', rs:'🦀', toml:'⚙️', yaml:'⚙️', yml:'⚙️',
+                  sh:'⚡', py:'🐍', vue:'💚', go:'🐹', rb:'💎', cpp:'⚙️', c:'⚙️' };
+    return map[ext] || '📄';
+}
+
+// ════════════════════════════════════════════════════════
+//  Drag & Drop — sidebar (拖入文件/文件夹打开)
+// ════════════════════════════════════════════════════════
+const sidebar = document.getElementById('sidebar');
+
+function setupTreeDrop() {
+    // 文件树行内拖放（移动文件）
+    document.querySelectorAll('.tree-item').forEach(row => {
+        row.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/tree-path', row.dataset.path);
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        row.addEventListener('dragover', (e) => {
+            const targetIsDir = row.dataset.isDir === '1';
+            if (targetIsDir) {
+                e.preventDefault();
+                row.classList.add('drop-target');
+            }
+        });
+        row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+        row.addEventListener('drop', async (e) => {
+            row.classList.remove('drop-target');
+            const srcPath = e.dataTransfer.getData('text/tree-path');
+            if (!srcPath || !row.dataset.isDir === '1') return;
+            e.preventDefault();
+            const name = srcPath.split('/').pop();
+            const destPath = row.dataset.path + '/' + name;
+            if (srcPath === destPath) return;
+            try {
+                await fsRename(srcPath, destPath);
+                if (currentFile === srcPath) { currentFile = destPath; updateTitle(); }
+                await refreshTree();
+            } catch(e2) { await dialogMessage('移动失败：' + e2, { title: '错误' }); }
+        });
+    });
+}
+
+// 侧边栏整体拖放（来自 Finder 的外部文件）
+sidebar.addEventListener('dragenter', (e) => {
+    appLog('sidebar dragenter');
+    e.preventDefault();
+    sidebar.classList.add('drag-over');
+});
+sidebar.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    sidebar.classList.add('drag-over');
+});
+sidebar.addEventListener('dragleave', (e) => {
+    appLog('sidebar dragleave');
+    if (!sidebar.contains(e.relatedTarget)) sidebar.classList.remove('drag-over');
+});
+sidebar.addEventListener('drop', async (e) => {
+    appLog('sidebar drop 触发');
+    e.preventDefault();
+    e.stopPropagation();
+    sidebar.classList.remove('drag-over');
+    
+    appLog('dataTransfer.types: ' + JSON.stringify(e.dataTransfer.types ? Array.from(e.dataTransfer.types) : 'N/A'));
+    appLog('dataTransfer.files length: ' + (e.dataTransfer.files ? e.dataTransfer.files.length : 'N/A'));
+    
+    const files = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
+    appLog('files 数量: ' + files.length);
+    
+    if (files.length === 0) {
+        appLog('files 为空');
+        return;
+    }
+    
+    const f = files[0];
+    appLog('file[0]: name=' + f.name + ', type=' + f.type + ', size=' + f.size);
+    appLog('file[0].path: ' + (f.path || 'undefined'));
+    
+    const path = f.path;
+    if (!path) {
+        appLog('没有 path 属性');
+        return;
+    }
+    
+    // 判断是否目录：Tauri 中 file.type 为空 && file.size 为 0 时通常是目录
+    if (!f.type && f.size === 0) {
+        appLog('判断为目录，打开: ' + path);
+        currentFolder = path;
+        treeData = {};
+        folderNameEl.textContent = path.split('/').pop() || path;
+        await refreshTree();
+    } else {
+        appLog('判断为文件，打开: ' + path);
+        await loadFile(path);
+    }
+});
+
+// ════════════════════════════════════════════════════════
+//  Context menu
+// ════════════════════════════════════════════════════════
+function showContextMenu(e, entry) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxTarget = entry;
+    document.getElementById('ctx-open').style.display       = entry.isDir ? 'none' : 'flex';
+    document.getElementById('ctx-new-folder').style.display = entry.isDir ? 'flex' : 'none';
+    // 防止菜单超出屏幕
+    const x = Math.min(e.clientX, window.innerWidth - 180);
+    const y = Math.min(e.clientY, window.innerHeight - 200);
+    ctxMenu.style.left = x + 'px';
+    ctxMenu.style.top  = y + 'px';
+    ctxMenu.classList.add('show');
+}
+
+document.addEventListener('click', () => ctxMenu.classList.remove('show'));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') ctxMenu.classList.remove('show'); });
+
+document.getElementById('ctx-open').addEventListener('click', async () => {
+    if (ctxTarget && !ctxTarget.isDir) await loadFile(ctxTarget.path);
+});
+
+document.getElementById('ctx-new-file').addEventListener('click', async () => {
+    if (!ctxTarget) return;
+    const dir = ctxTarget.isDir ? ctxTarget.path : ctxTarget.path.replace(/\/[^/]+$/, '');
+    await createNewFile(dir);
+});
+
+document.getElementById('ctx-new-folder').addEventListener('click', async () => {
+    if (!ctxTarget) return;
+    const dir = ctxTarget.isDir ? ctxTarget.path : ctxTarget.path.replace(/\/[^/]+$/, '');
+    await createNewFolder(dir);
+});
+
+document.getElementById('ctx-rename').addEventListener('click', () => {
+    if (ctxTarget) startInlineRename(ctxTarget);
+});
+
+document.getElementById('ctx-copy-path').addEventListener('click', () => {
+    if (ctxTarget) navigator.clipboard.writeText(ctxTarget.path).catch(() => {});
+});
+
+document.getElementById('ctx-delete').addEventListener('click', async () => {
+    if (!ctxTarget) return;
+    const ok = await dialogConfirm(`确认删除「${ctxTarget.name}」？\n此操作不可撤销。`, { title: '删除确认' });
+    if (!ok) return;
+    try {
+        await fsRemove(ctxTarget.path, ctxTarget.isDir);
+        if (currentFile === ctxTarget.path) window.newFile();
+        await refreshTree();
+    } catch(e) { await dialogMessage('删除失败：' + e, { title: '错误' }); }
+});
+
+// ════════════════════════════════════════════════════════
+//  Create file / folder
+// ════════════════════════════════════════════════════════
+async function createNewFile(dirPath) {
+    const name = window.prompt('新建文件名:', 'untitled.md');
+    if (!name || !name.trim()) return;
+    const fullPath = dirPath + '/' + name.trim();
+    try {
+        await writeTextFile(fullPath, '');
+        await refreshTree();
+        await loadFile(fullPath);
+    } catch(e) { await dialogMessage('创建失败：' + e, { title: '错误' }); }
+}
+
+async function createNewFolder(dirPath) {
+    const name = window.prompt('新建文件夹名:', 'new-folder');
+    if (!name || !name.trim()) return;
+    const fullPath = dirPath + '/' + name.trim();
+    try {
+        await fsCreateDir(fullPath);
+        if (treeData[dirPath]) treeData[dirPath].expanded = true;
+        await refreshTree();
+    } catch(e) { await dialogMessage('创建失败：' + e, { title: '错误' }); }
+}
+
+// ════════════════════════════════════════════════════════
+//  Inline rename
+// ════════════════════════════════════════════════════════
+function startInlineRename(entry) {
+    const targetRow = [...document.querySelectorAll('.tree-item')]
+        .find(r => r.dataset.path === entry.path);
+    if (!targetRow) return;
+    const label = targetRow.querySelector('.label');
+    const oldName = label.textContent;
+    const input = document.createElement('input');
+    input.className = 'rename-input';
+    input.value = oldName;
+    label.replaceWith(input);
+    input.focus();
+    // 选中不含扩展名部分
+    const dotIdx = oldName.lastIndexOf('.');
+    input.setSelectionRange(0, dotIdx > 0 ? dotIdx : oldName.length);
+
+    let committed = false;
+    const commit = async () => {
+        if (committed) return;
+        committed = true;
+        const newName = input.value.trim();
+        if (!newName || newName === oldName) { await refreshTree(); return; }
+        const newPath = entry.path.replace(/\/[^/]+$/, '') + '/' + newName;
+        try {
+            await fsRename(entry.path, newPath);
+            if (currentFile === entry.path) { currentFile = newPath; updateTitle(); }
+            await refreshTree();
+        } catch(e) { await dialogMessage('重命名失败：' + e, { title: '错误' }); await refreshTree(); }
+    };
+
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { committed = true; refreshTree(); }
+    });
+}
+
+// ════════════════════════════════════════════════════════
+//  Sidebar toggle (折叠/展开)
+// ════════════════════════════════════════════════════════
+let sidebarCollapsed = true;
+let sidebarWidth = 220; // 记住折叠前的宽度
+
+window.toggleSidebar = function() {
+    sidebarCollapsed = !sidebarCollapsed;
+    if (sidebarCollapsed) {
+        sidebarWidth = parseInt(sidebar.style.width) || 220;
+        sidebar.classList.add('collapsed');
+    } else {
+        sidebar.classList.remove('collapsed');
+        sidebar.style.width = sidebarWidth + 'px';
+    }
+    document.getElementById('btn-sidebar').classList.toggle('active', !sidebarCollapsed);
+};
+
+// 默认折叠侧边栏
+sidebar.classList.add('collapsed');
+
+// ════════════════════════════════════════════════════════
+//  Sidebar resize
+// ════════════════════════════════════════════════════════
+const resizeHandle = document.getElementById('resize-handle');
+let isResizing = false;
+
+resizeHandle.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    resizeHandle.classList.add('dragging');
+    e.preventDefault();
+});
+document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const w = e.clientX;
+    if (w >= 140 && w <= 500) {
+        sidebar.style.width = w + 'px';
+        sidebarWidth = w;
+    }
+});
+document.addEventListener('mouseup', () => {
+    if (isResizing) { isResizing = false; resizeHandle.classList.remove('dragging'); }
+});
+
+// ════════════════════════════════════════════════════════
+//  Split handle (编辑/预览分割线拖动)
+// ════════════════════════════════════════════════════════
+const splitHandle = document.getElementById('split-handle');
+const containerEl = document.getElementById('container');
+let isSplitting = false;
+
+splitHandle.addEventListener('mousedown', (e) => {
+    if (viewMode !== 'split') return;
+    isSplitting = true;
+    splitHandle.classList.add('dragging');
+    e.preventDefault();
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (!isSplitting) return;
+    const rect = containerEl.getBoundingClientRect();
+    const offset = e.clientX - rect.left;
+    const total = rect.width;
+    const minPx = 120;
+    const maxPx = total - 120;
+    if (offset < minPx || offset > maxPx) return;
+    const leftPct  = (offset / total * 100).toFixed(2);
+    const rightPct = (100 - leftPct).toFixed(2);
+    editorPane.style.flex = 'none';
+    editorPane.style.width = leftPct + '%';
+    document.getElementById('preview').style.flex = 'none';
+    document.getElementById('preview').style.width = rightPct + '%';
+});
+
+document.addEventListener('mouseup', () => {
+    if (isSplitting) { isSplitting = false; splitHandle.classList.remove('dragging'); }
+});
+
+// ════════════════════════════════════════════════════════
+//  Init
+// ════════════════════════════════════════════════════════
+const defaultContent = `# 欢迎使用 MD Editor
+
+这是一个本地 Markdown Wiki 编辑器，支持 **Mermaid 图表**、文件目录管理、拖放打开文件。
+
+## 快捷键
+
+| 快捷键 | 功能 |
+|--------|------|
+| ⌘S     | 保存 |
+| ⌘⇧S   | 另存为 |
+| ⌘O     | 打开文件 |
+| ⌘N     | 新建 |
+| ⌘P     | 切换预览/分屏 |
+
+## Mermaid 示例
+
+\`\`\`mermaid
+graph TD
+    A[开始] --> B{判断}
+    B -->|条件1| C[处理1]
+    B -->|条件2| D[处理2]
+    C --> E[结束]
+    D --> E
+\`\`\`
+
+## 时序图
+
+\`\`\`mermaid
+sequenceDiagram
+    participant A as 用户
+    participant B as 系统
+    A->>B: 发送请求
+    B->>B: 处理数据
+    B-->>A: 返回结果
+\`\`\`
+`;
+
+editor.value = defaultContent;
+updatePreview();
+updateTitle();
+updateCursorPos();
+
+// 启动时检查是否由文件关联打开（双击 .md 文件）
+(async () => {
+    appLog('App 启动，检查命令行参数...');
+    try {
+        const filePath = await invoke('get_open_file');
+        appLog(`get_open_file 返回: ${filePath || 'null'}`);
+        if (filePath) {
+            await loadFile(filePath);
+            appLog(`已打开文件: ${filePath}`);
+        }
+    } catch(e) {
+        appLog(`get_open_file 错误: ${e}`);
+        console.warn('get_open_file:', e);
+    }
+})();
+
+// 监听 macOS Finder 双击打开文件事件（App 已运行时）
+appLog('注册 open-file 事件监听...');
+if (window.__TAURI__.event) {
+    window.__TAURI__.event.listen('open-file', (event) => {
+        appLog(`收到 open-file 事件: ${JSON.stringify(event)}`);
+        if (event.payload) {
+            appLog(`打开文件: ${event.payload}`);
+            loadFile(event.payload);
+        }
+    });
+    appLog('open-file 监听已注册');
+    
+    // 监听 Tauri 文件拖放事件
+    window.__TAURI__.event.listen('tauri://file-drop', (event) => {
+        appLog(`收到 file-drop 事件: ${JSON.stringify(event)}`);
+        if (event.payload && event.payload.length > 0) {
+            const path = event.payload[0];
+            appLog(`拖放文件路径: ${path}`);
+            if (path.endsWith('.md') || path.endsWith('.markdown') || path.endsWith('.txt')) {
+                loadFile(path);
+            } else {
+                appLog('不是支持的文件类型');
+            }
+        }
+    });
+    appLog('file-drop 监听已注册');
+    
+    // 监听文件拖放悬停事件
+    window.__TAURI__.event.listen('tauri://file-drop-hover', (event) => {
+        appLog(`收到 file-drop-hover 事件`);
+    });
+    
+    // 监听文件拖放取消事件
+    window.__TAURI__.event.listen('tauri://file-drop-cancelled', (event) => {
+        appLog(`收到 file-drop-cancelled 事件`);
+    });
+} else {
+    appLog('警告: window.__TAURI__.event 不存在');
+}
+</script>
+</body>
+</html>
